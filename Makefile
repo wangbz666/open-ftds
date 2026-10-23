@@ -32,15 +32,20 @@ $(BUILD_DIR)/openftds-report: tools/openftds-report | $(BUILD_DIR)
 $(BUILD_DIR)/openftds-test: tests/test_openftds.c $(BUILD_DIR)/libopenftds.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -std=c11 $(INCLUDES) $(THREADS) $< $(BUILD_DIR)/libopenftds.a -o $@
 
+$(BUILD_DIR)/openftds-cpp20-test: tests/test_cpp.cpp $(BUILD_DIR)/libopenftds.a
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WARNINGS) -std=c++20 $(INCLUDES) $(THREADS) $< $(BUILD_DIR)/libopenftds.a -o $@
+
 $(BUILD_DIR)/openftds-example: examples/basic.c $(BUILD_DIR)/libopenftds.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -std=c11 $(INCLUDES) $(THREADS) $< $(BUILD_DIR)/libopenftds.a -o $@
 
 $(BUILD_DIR)/openftds-ftds-compatible: examples/ftds_compatible.c $(BUILD_DIR)/libftdsclient.a
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARNINGS) -std=c11 $(INCLUDES) $(THREADS) $< $(BUILD_DIR)/libftdsclient.a -o $@
 
-test: $(BUILD_DIR)/openftds-test $(BUILD_DIR)/openftds-report
+test: $(BUILD_DIR)/openftds-test $(BUILD_DIR)/openftds-cpp20-test $(BUILD_DIR)/openftds-report
 	$(BUILD_DIR)/openftds-test
+	$(BUILD_DIR)/openftds-cpp20-test
 	python3 tests/test_report.py $(BUILD_DIR)/openftds-report
+	python3 tests/test_yrcache_build.py
 
 example: $(BUILD_DIR)/openftds-example $(BUILD_DIR)/openftds-ftds-compatible
 	$(BUILD_DIR)/openftds-example

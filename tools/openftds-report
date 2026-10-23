@@ -45,12 +45,13 @@ def load(paths: list[str]):
                     if key not in aggregated:
                         aggregated[key] = {
                             "event_id": key[0], "module": key[1], "name": key[2], "level": key[3],
-                            "count": 0, "errors": 0, "total_ns": 0,
+                            "count": 0, "errors": 0, "slow": 0, "total_ns": 0,
                             "min_ns": None, "max_ns": 0, "hist": [0] * 32,
                         }
                     item = aggregated[key]
                     item["count"] += int(row["count"])
                     item["errors"] += int(row["errors"])
+                    item["slow"] += int(row.get("slow", 0))
                     item["total_ns"] += int(row["total_ns"])
                     value_min = int(row["min_ns"])
                     item["min_ns"] = value_min if item["min_ns"] is None else min(item["min_ns"], value_min)
@@ -73,6 +74,7 @@ def enrich(item):
     item["p95_us"] = percentile(item["hist"], count, 0.95)
     item["p99_us"] = percentile(item["hist"], count, 0.99)
     item["error_pct"] = item["errors"] * 100.0 / count if count else 0.0
+    item["slow_pct"] = item["slow"] * 100.0 / count if count else 0.0
     return item
 
 
@@ -80,7 +82,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Aggregate OpenFTDS .ios interval files")
     parser.add_argument("paths", nargs="+", help=".ios files or directories")
     parser.add_argument("--top", type=int, default=20, help="number of rows (0 means all)")
-    parser.add_argument("--sort", choices=["p99", "avg", "max", "count", "errors", "total"], default="p99")
+    parser.add_argument("--sort", choices=["p99", "avg", "max", "count", "errors", "slow", "total"], default="p99")
     parser.add_argument("--json", action="store_true", help="emit JSON")
     args = parser.parse_args()
     items, malformed = load(args.paths)
@@ -88,7 +90,7 @@ def main() -> int:
         enrich(item)
     sort_key = {
         "p99": "p99_us", "avg": "avg_us", "max": "max_us", "count": "count",
-        "errors": "errors", "total": "total_ns",
+        "errors": "errors", "slow": "slow", "total": "total_ns",
     }[args.sort]
     items.sort(key=lambda item: item[sort_key], reverse=True)
     if args.top > 0:
@@ -97,13 +99,13 @@ def main() -> int:
         print(json.dumps([{k: v for k, v in item.items() if k not in {"hist", "min_ns", "max_ns"}}
                           for item in items], indent=2, ensure_ascii=False))
         return 1 if malformed else 0
-    header = f"{'ID':>10} {'LV':>2} {'COUNT':>10} {'ERR%':>7} {'AVGus':>10} {'P50us':>10} {'P95us':>10} {'P99us':>10} {'MAXus':>10}  EVENT"
+    header = f"{'ID':>10} {'LV':>2} {'COUNT':>10} {'ERR%':>7} {'SLOW%':>7} {'AVGus':>10} {'P50us':>10} {'P95us':>10} {'P99us':>10} {'MAXus':>10}  EVENT"
     print(header)
     print("-" * len(header))
     for item in items:
         event = f"{item['module']}/{item['name']}"
         print(f"{item['event_id']:>10} {item['level']:>2} {item['count']:>10} {item['error_pct']:>6.2f}% "
-              f"{item['avg_us']:>10.2f} {item['p50_us']:>10.0f} {item['p95_us']:>10.0f} "
+              f"{item['slow_pct']:>6.2f}% {item['avg_us']:>10.2f} {item['p50_us']:>10.0f} {item['p95_us']:>10.0f} "
               f"{item['p99_us']:>10.0f} {item['max_us']:>10.2f}  {event}")
     return 1 if malformed else 0
 

@@ -6,6 +6,10 @@ stable event IDs, interval aggregation, rotating `.ios` files, and an offline
 reporter for count, errors, average latency, min/max, and approximate
 P50/P95/P99 latency.
 
+Version 0.2 adds lazy post-fork recovery for worker processes, runtime enable
+and level controls, 1/N sampling, slow-operation counters, and a C++20 build
+check for torch-extension integration.
+
 Its compatibility layer supplies the public `ftds.h`, `initFtdsClient`,
 `FTDS_DELAY_START/END`, and `-lftdsclient` usage pattern. Both precomputed
 nanosecond durations and library-timed tokens are supported.

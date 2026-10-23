@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(openftds VERSION 0.1.0 LANGUAGES C CXX)
+project(openftds VERSION 0.2.0 LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 include(CTest)
@@ -51,11 +51,19 @@ if(OPENFTDS_BUILD_TESTS)
     target_link_libraries(openftds-test PRIVATE openftds::openftds)
     add_test(NAME openftds-core COMMAND openftds-test)
 
+    add_executable(openftds-cpp20-test tests/test_cpp.cpp)
+    target_compile_features(openftds-cpp20-test PRIVATE cxx_std_20)
+    target_link_libraries(openftds-cpp20-test PRIVATE openftds::openftds)
+    add_test(NAME openftds-cpp20 COMMAND openftds-cpp20-test)
+
     find_package(Python3 COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
         add_test(NAME openftds-report
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_report.py
                     ${CMAKE_CURRENT_SOURCE_DIR}/tools/openftds-report)
+        add_test(NAME openftds-yrcache-build
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_yrcache_build.py)
     endif()
 endif()
 

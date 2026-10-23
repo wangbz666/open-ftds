@@ -13,6 +13,8 @@ FTDS 调用方式相近的开始/结束模型，按固定事件 ID 聚合调用�
 - C11 API 和 C++ RAII 封装；
 - `START/END` 风格时延埋点，固定 `event_id`、模块和级别；
 - 多线程安全的调用、错误和时延直方图聚合；
+- fork 后按 PID 自动重建，适合 vLLM worker 多进程；
+- 运行期开关、级别过滤、1/N 采样和慢 I/O 计数；
 - 后台周期落盘，默认单文件 20 MiB、保留 50 个文件；
 - FTDS 风格目录：`data/stat/*.ios` 与 `run/client/*.log`；
 - `.ios` 使用 JSON Lines，便于审计、脚本处理与长期维护；
@@ -45,6 +47,8 @@ make example
 openftds_config_t config = {
     .directory = "/var/log/my-service/ftds",
     .flush_interval_ms = 10000,
+    .sample_rate = 1,
+    .slow_threshold_ns = 100000000,
 };
 openftds_init(&config);
 
@@ -56,6 +60,9 @@ OPENFTDS_DELAY_END("READ_TOTAL", "cache", 447,
 
 openftds_shutdown();
 ```
+
+运行中可调用 `openftds_set_enabled()`、`openftds_set_min_level()` 和
+`openftds_set_sample_rate()`，或通过 `openftds_get_status()` 查询当前进程状态。
 
 不调用 `openftds_init()` 也可以：第一次埋点会自动初始化，输出根目录取环境变量
 `OPENFTDS_DIR`，未设置时使用当前目录下的 `openftds/`。
@@ -103,7 +110,7 @@ FTDS_DELAY_END("READ", "cache", 447, STAT_MODE_DELAY, &token, 0);
 每行 `.ios` 都是一个独立 JSON 对象：
 
 ```json
-{"schema":1,"captured_at_ns":1770000000000000000,"pid":1234,"event_id":447,"module":"cache","name":"READ_TOTAL","level":1,"count":1000,"errors":2,"total_ns":250000000,"min_ns":81000,"max_ns":920000,"hist_us_log2":[0,0,0,0,0,3,120,700,170,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}
+{"schema":1,"captured_at_ns":1770000000000000000,"pid":1234,"event_id":447,"module":"cache","name":"READ_TOTAL","level":1,"count":1000,"errors":2,"slow":7,"slow_threshold_ns":100000000,"total_ns":250000000,"min_ns":81000,"max_ns":920000,"hist_us_log2":[0,0,0,0,0,3,120,700,170,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}
 ```
 
 百分位数来自以微秒为单位的 log2 直方图，是桶上界近似值；最小值、最大值和平均值使用
@@ -143,6 +150,8 @@ openftds-report /var/log/my-service/ftds --json
 - [架构与并发模型](docs/architecture.md)
 - [数据格式](docs/format.md)
 - [公开资料与设计依据](docs/public-research.md)
+- [运行期开关、采样与慢 I/O](docs/runtime-control.md)
+- [YRCache/Jenkins 接入方案](docs/yrcache-jenkins-integration.md)
 
 ## 许可证
 

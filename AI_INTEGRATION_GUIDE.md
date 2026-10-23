@@ -8,7 +8,8 @@
 ```text
 你正在给一个 C/C++ 项目接入本目录中的 OpenFTDS。请先完整阅读 README.md、
 OFFLINE_DELIVERY.md、docs/compatibility.md、docs/architecture.md 和
-docs/format.md，然后检查目标项目的构建系统与所有 FTDS 调用点。
+docs/format.md、docs/runtime-control.md 和 docs/yrcache-jenkins-integration.md，
+然后检查目标项目的构建系统与所有 FTDS 调用点。
 
 目标：在不改变业务语义的前提下，用 OpenFTDS 收集固定事件 ID 的调用次数、错误数和
 时延分布，输出 data/stat/*.ios，并能由 tools/openftds-report 离线分析。
@@ -30,8 +31,12 @@ docs/format.md，然后检查目标项目的构建系统与所有 FTDS 调用点
 9. 不要修改 OpenFTDS 的 schema 1 字段含义。需要扩展时增加可选字段，并保证旧读取器可
    忽略它们。
 10. 最终输出：修改文件清单、构建命令、测试证据、事件 ID 清单、部署目录与回滚方法。
+11. YRCache 的 torch 扩展中，不要把 openftds.c 直接加入 CUDAExtension sources；使用
+    integration/yrcache/openftds_build.py 先以 C11/PIC 生成静态库，再加入 extra_objects。
+12. 增加“父进程先初始化、随后 fork worker、父子分别打点”的集成测试，并确认输出文件
+    PID 不同、统计不重复。
 
-禁止事项：不要在信号处理函数中调用 flush；不要在 fork 后同时沿用父进程后台线程；
+禁止事项：不要在信号处理函数中调用 flush；不要让构建系统用 nvcc 编译 openftds.c；
 不要让同一进程内同一 event_id 表示不同事件；不要同时链接 libopenftds 和
 libftdsclient 两份实现。
 ```

@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 #define OPENFTDS_VERSION_MAJOR 0
-#define OPENFTDS_VERSION_MINOR 1
+#define OPENFTDS_VERSION_MINOR 2
 #define OPENFTDS_VERSION_PATCH 0
 
 typedef enum openftds_level {
@@ -36,11 +36,26 @@ typedef struct openftds_config {
     openftds_level_t min_level;
     /* Call fsync(2) after every flush. Usually unnecessary. */
     int fsync_on_flush;
+    /* Record one out of every N operations. Zero and one both mean all. */
+    unsigned sample_rate;
+    /* Count operations at or above this duration as slow. Zero disables it. */
+    uint64_t slow_threshold_ns;
 } openftds_config_t;
 
 typedef struct openftds_token {
     uint64_t start_ns;
+    long pid;
 } openftds_token_t;
+
+typedef struct openftds_status {
+    long pid;
+    int initialized;
+    int enabled;
+    openftds_level_t min_level;
+    unsigned sample_rate;
+    uint64_t slow_threshold_ns;
+    unsigned registered_events;
+} openftds_status_t;
 
 /* Initializes the process-wide collector. Safe to call more than once. */
 int openftds_init(const openftds_config_t *config);
@@ -50,6 +65,15 @@ void openftds_shutdown(void);
 
 /* Writes the current interval to disk without stopping the collector. */
 int openftds_flush(void);
+
+/* Runtime controls. Changes affect subsequent measurements. */
+void openftds_set_enabled(int enabled);
+int openftds_is_enabled(void);
+void openftds_set_min_level(openftds_level_t min_level);
+void openftds_set_sample_rate(unsigned one_in_n);
+
+/* Returns process-local diagnostic state without flushing aggregates. */
+int openftds_get_status(openftds_status_t *status);
 
 /* Monotonic timestamp used by the collector. */
 uint64_t openftds_now_ns(void);
