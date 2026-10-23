@@ -87,10 +87,10 @@ static collector_t g = {
     .flush_mu = PTHREAD_MUTEX_INITIALIZER,
     .registry_mu = PTHREAD_MUTEX_INITIALIZER,
     .wake_cv = PTHREAD_COND_INITIALIZER,
-    .owner_pid = ATOMIC_VAR_INIT(0),
-    .enabled = ATOMIC_VAR_INIT(1),
-    .min_level = ATOMIC_VAR_INIT(OPENFTDS_LEVEL_NORMAL),
-    .sample_rate = ATOMIC_VAR_INIT(1),
+    .owner_pid = 0,
+    .enabled = 1,
+    .min_level = OPENFTDS_LEVEL_NORMAL,
+    .sample_rate = 1u,
     .out_fd = -1,
     .log_fd = -1
 };

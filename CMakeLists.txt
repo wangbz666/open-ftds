@@ -22,6 +22,9 @@ function(openftds_configure_target target)
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
     endif()
     set_target_properties(${target} PROPERTIES
+        C_STANDARD 11
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
         VERSION ${PROJECT_VERSION}
         SOVERSION ${PROJECT_VERSION_MAJOR}
         POSITION_INDEPENDENT_CODE ON
