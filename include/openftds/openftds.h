@@ -15,7 +15,7 @@ extern "C" {
 
 #define OPENFTDS_VERSION_MAJOR 0
 #define OPENFTDS_VERSION_MINOR 2
-#define OPENFTDS_VERSION_PATCH 0
+#define OPENFTDS_VERSION_PATCH 1
 
 typedef enum openftds_level {
     OPENFTDS_LEVEL_NORMAL = 0,

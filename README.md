@@ -13,7 +13,7 @@ FTDS 调用方式相近的开始/结束模型，按固定事件 ID 聚合调用�
 - C11 API 和 C++ RAII 封装；
 - `START/END` 风格时延埋点，固定 `event_id`、模块和级别；
 - 多线程安全的调用、错误和时延直方图聚合；
-- fork 后按 PID 自动重建，适合 vLLM worker 多进程；
+- fork 后由 atfork 标志触发自动重建，普通打点不调用 `getpid()`，适合 vLLM worker 多进程；
 - 运行期开关、级别过滤、1/N 采样和慢 I/O 计数；
 - 后台周期落盘，默认单文件 20 MiB、保留 50 个文件；
 - FTDS 风格目录：`data/stat/*.ios` 与 `run/client/*.log`；

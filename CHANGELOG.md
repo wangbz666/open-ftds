@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Keep the configured output directory in collector-owned storage after init.
+- Use `pthread_atfork` to make the common instrumentation path free of `getpid()` calls.
+- Make the initialized-state fast path atomic and avoid its lifecycle mutex.
+- Preserve the PID-based recovery path when `pthread_atfork` is unavailable.
+
 ## 0.2.0
 
 - Detect PID changes and lazily rebuild process-local state after fork.

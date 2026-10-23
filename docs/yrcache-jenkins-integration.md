@@ -68,7 +68,9 @@ target_link_libraries(c_ops PRIVATE yrcache_openftds)
 
 ## vLLM 多进程
 
-0.2.0 起，OpenFTDS 在每个公开 API 入口先比较当前 PID。fork 子进程首次使用时会：
+0.2.1 起，OpenFTDS 通过 `pthread_atfork` 在子进程中仅设置一个安全标志，普通打点路径不再
+调用 `getpid()`。子进程首次使用时才执行恢复；若平台不能注册 atfork 回调，则自动退回 PID
+比较。恢复过程会：
 
 1. 关闭继承的父进程输出文件描述符；
 2. 丢弃父进程未 flush 的聚合副本，避免重复统计；

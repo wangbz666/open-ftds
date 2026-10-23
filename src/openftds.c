@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -58,7 +59,7 @@ typedef struct collector {
     pthread_cond_t wake_cv;
     pthread_t writer_thread;
     int writer_started;
-    int initialized;
+    atomic_int initialized;
     int stopping;
     atomic_long owner_pid;
     atomic_int enabled;
@@ -87,6 +88,7 @@ static collector_t g = {
     .flush_mu = PTHREAD_MUTEX_INITIALIZER,
     .registry_mu = PTHREAD_MUTEX_INITIALIZER,
     .wake_cv = PTHREAD_COND_INITIALIZER,
+    .initialized = 0,
     .owner_pid = 0,
     .enabled = 1,
     .min_level = OPENFTDS_LEVEL_NORMAL,
@@ -105,6 +107,23 @@ typedef struct compat_frame {
 static _Thread_local compat_frame_t compat_frames[OPENFTDS_COMPAT_STACK];
 static _Thread_local unsigned compat_depth;
 static _Thread_local uint64_t sample_counter;
+
+/*
+ * pthread_atfork's child callback must remain async-signal-safe. It only marks
+ * that recovery is required; all file, allocator, and pthread state repair is
+ * deliberately deferred until the child next enters OpenFTDS.
+ */
+static volatile sig_atomic_t fork_detected;
+/* 0: not attempted, 1: installed, -1: unavailable (use PID fallback). */
+static atomic_int atfork_state;
+
+static void mark_fork_child(void) { fork_detected = 1; }
+
+static void register_atfork_once(void) {
+    if (atomic_load_explicit(&atfork_state, memory_order_acquire) != 0) return;
+    int state = pthread_atfork(NULL, NULL, mark_fork_child) == 0 ? 1 : -1;
+    atomic_store_explicit(&atfork_state, state, memory_order_release);
+}
 
 static void reset_sync_primitives_after_fork(void) {
     pthread_mutex_t lifecycle = PTHREAD_MUTEX_INITIALIZER;
@@ -127,19 +146,31 @@ static void reset_slots_after_fork(void) {
 
 /*
  * A vLLM worker may fork after the collector has started. Only the calling
- * thread survives, so inherited mutex and stdio state cannot be reused. A PID
- * change is detected before any collector lock is touched; the child drops
- * parent aggregates and lazily starts a new writer with the inherited config.
+ * thread survives, so inherited mutex and stdio state cannot be reused.
+ * pthread_atfork marks the child before it can re-enter the collector. Normal
+ * calls therefore avoid getpid(); when atfork is unavailable, a PID comparison
+ * remains as a portable fallback. Recovery happens before any collector lock
+ * is touched, drops parent aggregates, and lazily starts a new writer with the
+ * inherited config.
  */
 static void recover_after_fork_if_needed(void) {
+    if (atomic_load_explicit(&atfork_state, memory_order_acquire) == 1 &&
+        !fork_detected) return;
+
     long current = (long)getpid();
     for (;;) {
         long owner = atomic_load_explicit(&g.owner_pid, memory_order_acquire);
-        if (owner == current) return;
+        if (owner == current) {
+            fork_detected = 0;
+            return;
+        }
         if (owner == 0) {
             if (atomic_compare_exchange_weak_explicit(
                     &g.owner_pid, &owner, current,
-                    memory_order_acq_rel, memory_order_acquire)) return;
+                    memory_order_acq_rel, memory_order_acquire)) {
+                fork_detected = 0;
+                return;
+            }
             continue;
         }
         if (owner == -current) continue;
@@ -148,7 +179,8 @@ static void recover_after_fork_if_needed(void) {
                 &g.owner_pid, &expected, -current,
                 memory_order_acq_rel, memory_order_acquire)) continue;
 
-        int preserve_config = g.initialized;
+        int preserve_config = atomic_load_explicit(
+            &g.initialized, memory_order_acquire);
         if (preserve_config) {
             g.fork_config = g.config;
             g.fork_config.min_level = (openftds_level_t)atomic_load_explicit(
@@ -166,7 +198,7 @@ static void recover_after_fork_if_needed(void) {
         g.out_fd = -1;
         g.log_fd = -1;
         g.writer_started = 0;
-        g.initialized = 0;
+        atomic_store_explicit(&g.initialized, 0, memory_order_release);
         g.stopping = 0;
         g.sequence = 0;
         g.started_epoch = 0;
@@ -176,6 +208,7 @@ static void recover_after_fork_if_needed(void) {
         compat_depth = 0;
         sample_counter = 0;
         atomic_store_explicit(&g.owner_pid, current, memory_order_release);
+        fork_detected = 0;
         return;
     }
 }
@@ -403,7 +436,7 @@ static int write_snapshot(void) {
 int openftds_flush(void) {
     recover_after_fork_if_needed();
     pthread_mutex_lock(&g.lifecycle_mu);
-    int initialized = g.initialized;
+    int initialized = atomic_load_explicit(&g.initialized, memory_order_acquire);
     pthread_mutex_unlock(&g.lifecycle_mu);
     if (!initialized) return 0;
     pthread_mutex_lock(&g.flush_mu);
@@ -460,10 +493,11 @@ static int env_enabled(int fallback) {
 int openftds_init(const openftds_config_t *config) {
     recover_after_fork_if_needed();
     pthread_mutex_lock(&g.lifecycle_mu);
-    if (g.initialized) {
+    if (atomic_load_explicit(&g.initialized, memory_order_acquire)) {
         pthread_mutex_unlock(&g.lifecycle_mu);
         return 0;
     }
+    register_atfork_once();
 
     openftds_config_t selected = {0};
     char selected_root[PATH_MAX] = {0};
@@ -490,6 +524,9 @@ int openftds_init(const openftds_config_t *config) {
         pthread_mutex_unlock(&g.lifecycle_mu);
         return ENAMETOOLONG;
     }
+    /* Never retain selected.directory: inherited initialization may have used
+     * selected_root, which is a stack buffer. g.root has collector lifetime. */
+    g.config.directory = g.root;
     int rc = mkdirs(g.stat_dir);
     if (rc == 0) rc = mkdirs(g.log_dir);
     if (rc != 0) {
@@ -532,7 +569,7 @@ int openftds_init(const openftds_config_t *config) {
     atomic_store_explicit(&g.sample_rate, runtime_sample_rate, memory_order_release);
     g.fork_config_pending = 0;
     g.stopping = 0;
-    g.initialized = 1;
+    atomic_store_explicit(&g.initialized, 1, memory_order_release);
     static int atexit_registered = 0;
     if (!atexit_registered) {
         (void)atexit(shutdown_at_exit);
@@ -551,7 +588,7 @@ int openftds_init(const openftds_config_t *config) {
 void openftds_shutdown(void) {
     recover_after_fork_if_needed();
     pthread_mutex_lock(&g.lifecycle_mu);
-    if (!g.initialized) {
+    if (!atomic_load_explicit(&g.initialized, memory_order_acquire)) {
         pthread_mutex_unlock(&g.lifecycle_mu);
         return;
     }
@@ -573,15 +610,13 @@ void openftds_shutdown(void) {
     g.out_fd = -1;
     g.log_fd = -1;
     g.writer_started = 0;
-    g.initialized = 0;
+    atomic_store_explicit(&g.initialized, 0, memory_order_release);
     pthread_mutex_unlock(&g.lifecycle_mu);
 }
 
 static int ensure_initialized(void) {
     recover_after_fork_if_needed();
-    pthread_mutex_lock(&g.lifecycle_mu);
-    int initialized = g.initialized;
-    pthread_mutex_unlock(&g.lifecycle_mu);
+    int initialized = atomic_load_explicit(&g.initialized, memory_order_acquire);
     return initialized ? 0 : openftds_init(NULL);
 }
 
@@ -630,8 +665,8 @@ int openftds_get_status(openftds_status_t *status) {
         &g.min_level, memory_order_acquire);
     status->sample_rate = atomic_load_explicit(&g.sample_rate, memory_order_acquire);
     pthread_mutex_lock(&g.lifecycle_mu);
-    status->initialized = g.initialized;
-    status->slow_threshold_ns = g.initialized ? g.config.slow_threshold_ns : 0;
+    status->initialized = atomic_load_explicit(&g.initialized, memory_order_acquire);
+    status->slow_threshold_ns = status->initialized ? g.config.slow_threshold_ns : 0;
     pthread_mutex_unlock(&g.lifecycle_mu);
     for (unsigned i = 0; i < OPENFTDS_MAX_EVENTS; ++i) {
         if (atomic_load_explicit(&g.slots[i].state, memory_order_acquire) == 2)
@@ -645,7 +680,7 @@ openftds_token_t openftds_delay_start(openftds_level_t level) {
     if (ensure_initialized() != 0) return token;
     if (!level_is_enabled(level) || !should_sample()) return token;
     token.start_ns = openftds_now_ns();
-    token.pid = (long)getpid();
+    token.pid = atomic_load_explicit(&g.owner_pid, memory_order_acquire);
     return token;
 }
 
@@ -670,7 +705,8 @@ static void record_sampled(const char *name, const char *module,
 void openftds_delay_end(const char *name, const char *module, uint32_t event_id,
                         openftds_level_t level, openftds_token_t token, int status) {
     recover_after_fork_if_needed();
-    if (token.start_ns == 0 || token.pid != (long)getpid()) return;
+    if (token.start_ns == 0 ||
+        token.pid != atomic_load_explicit(&g.owner_pid, memory_order_acquire)) return;
     uint64_t now = openftds_now_ns();
     uint64_t duration = now >= token.start_ns ? now - token.start_ns : 0;
     record_sampled(name, module, event_id, level, duration, status);

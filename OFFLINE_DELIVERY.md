@@ -10,14 +10,14 @@
 在压缩包同级目录执行：
 
 ```bash
-shasum -a 256 -c open-ftds-0.2.0.sha256
-tar -tzf open-ftds-0.2.0.tar.gz | head
+shasum -a 256 -c open-ftds-0.2.1.sha256
+tar -tzf open-ftds-0.2.1.tar.gz | head
 ```
 
 若内网没有 `shasum`，可使用：
 
 ```bash
-sha256sum -c open-ftds-0.2.0.sha256
+sha256sum -c open-ftds-0.2.1.sha256
 ```
 
 ## 2. 构建和自测
