@@ -1,0 +1,9 @@
+/build/
+/demo-output/
+/demo-output-compat/
+/openftds/
+*.ios
+*.log
+.DS_Store
+__pycache__/
+*.pyc

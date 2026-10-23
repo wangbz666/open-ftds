@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Aggregate and rank OpenFTDS interval files."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+
+def inputs(paths: list[str]):
+    for raw in paths:
+        path = Path(raw)
+        if path.is_dir():
+            yield from sorted(path.rglob("*.ios"))
+        elif path.is_file():
+            yield path
+
+
+def percentile(hist: list[int], count: int, fraction: float) -> float:
+    if count <= 0:
+        return 0.0
+    target = max(1, int(count * fraction + 0.999999))
+    seen = 0
+    for bucket, value in enumerate(hist):
+        seen += value
+        if seen >= target:
+            return float(1 << bucket)
+    return float(1 << (len(hist) - 1))
+
+
+def load(paths: list[str]):
+    aggregated = {}
+    malformed = 0
+    for path in inputs(paths):
+        with path.open("r", encoding="utf-8") as stream:
+            for line_number, line in enumerate(stream, 1):
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                    key = (int(row["event_id"]), row["module"], row["name"], int(row["level"]))
+                    if key not in aggregated:
+                        aggregated[key] = {
+                            "event_id": key[0], "module": key[1], "name": key[2], "level": key[3],
+                            "count": 0, "errors": 0, "total_ns": 0,
+                            "min_ns": None, "max_ns": 0, "hist": [0] * 32,
+                        }
+                    item = aggregated[key]
+                    item["count"] += int(row["count"])
+                    item["errors"] += int(row["errors"])
+                    item["total_ns"] += int(row["total_ns"])
+                    value_min = int(row["min_ns"])
+                    item["min_ns"] = value_min if item["min_ns"] is None else min(item["min_ns"], value_min)
+                    item["max_ns"] = max(item["max_ns"], int(row["max_ns"]))
+                    for i, value in enumerate(row.get("hist_us_log2", [])):
+                        if i < len(item["hist"]):
+                            item["hist"][i] += int(value)
+                except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+                    malformed += 1
+                    print(f"warning: {path}:{line_number}: {error}", file=sys.stderr)
+    return list(aggregated.values()), malformed
+
+
+def enrich(item):
+    count = item["count"]
+    item["avg_us"] = item["total_ns"] / count / 1000.0 if count else 0.0
+    item["min_us"] = (item["min_ns"] or 0) / 1000.0
+    item["max_us"] = item["max_ns"] / 1000.0
+    item["p50_us"] = percentile(item["hist"], count, 0.50)
+    item["p95_us"] = percentile(item["hist"], count, 0.95)
+    item["p99_us"] = percentile(item["hist"], count, 0.99)
+    item["error_pct"] = item["errors"] * 100.0 / count if count else 0.0
+    return item
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Aggregate OpenFTDS .ios interval files")
+    parser.add_argument("paths", nargs="+", help=".ios files or directories")
+    parser.add_argument("--top", type=int, default=20, help="number of rows (0 means all)")
+    parser.add_argument("--sort", choices=["p99", "avg", "max", "count", "errors", "total"], default="p99")
+    parser.add_argument("--json", action="store_true", help="emit JSON")
+    args = parser.parse_args()
+    items, malformed = load(args.paths)
+    for item in items:
+        enrich(item)
+    sort_key = {
+        "p99": "p99_us", "avg": "avg_us", "max": "max_us", "count": "count",
+        "errors": "errors", "total": "total_ns",
+    }[args.sort]
+    items.sort(key=lambda item: item[sort_key], reverse=True)
+    if args.top > 0:
+        items = items[: args.top]
+    if args.json:
+        print(json.dumps([{k: v for k, v in item.items() if k not in {"hist", "min_ns", "max_ns"}}
+                          for item in items], indent=2, ensure_ascii=False))
+        return 1 if malformed else 0
+    header = f"{'ID':>10} {'LV':>2} {'COUNT':>10} {'ERR%':>7} {'AVGus':>10} {'P50us':>10} {'P95us':>10} {'P99us':>10} {'MAXus':>10}  EVENT"
+    print(header)
+    print("-" * len(header))
+    for item in items:
+        event = f"{item['module']}/{item['name']}"
+        print(f"{item['event_id']:>10} {item['level']:>2} {item['count']:>10} {item['error_pct']:>6.2f}% "
+              f"{item['avg_us']:>10.2f} {item['p50_us']:>10.0f} {item['p95_us']:>10.0f} "
+              f"{item['p99_us']:>10.0f} {item['max_us']:>10.2f}  {event}")
+    return 1 if malformed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
